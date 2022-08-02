@@ -79,15 +79,15 @@ unsigned long long returnTime(){
     return time;
 }
 
-void writeTrade(char* symbol,double p, double v, unsigned long long time_diff){
-    char name[20];
-    sprintf(name,"%.4s-Trades.txt",symbol);
+void writeTrade(char* symbol,double p, double v,unsigned long long trade_time, unsigned long long time_diff){
+    char name[30];
+    sprintf(name,"%s-Trades.txt",symbol);
     
     FILE *f;
     f = fopen(name,"a");
-    size_t needed = snprintf(NULL, 0, "%lf %lf %llu\n",p,v,time_diff) + 1;
+    size_t needed = snprintf(NULL, 0, "%lf %lf %llu %llu\n",p,v,trade_time,time_diff) + 1;
     char  *buffer = malloc(needed);
-    sprintf(buffer,"%lf %lf %llu\n",p,v,time_diff);
+    sprintf(buffer,"%lf %lf %llu %llu\n",p,v,trade_time,time_diff);
     fwrite(buffer,needed,1,f);
     free(buffer);
     fclose(f);
@@ -121,13 +121,13 @@ void updateCandlestick(data_t* data,int idx, double p, unsigned long long t, dou
     unsigned long long time_now = returnTime();
     unsigned long long time_diff = time_now - t;
     
-    writeTrade(data->candlesticks[idx].symbol,p,v,time_diff);
+    writeTrade(data->candlesticks[idx].symbol,p,v,t,time_diff);
     //printf("Candlestick: %s Open: %lf Close: %lf Low: %lf High: %lf Total Price: %lf Total Volume: %lf Timediff: %llu Empty: %d Count: %d\n", data->candlesticks[idx].symbol, data->candlesticks[idx].open_price,data->candlesticks[idx].close_price,data->candlesticks[idx].low_price,data->candlesticks[idx].high_price,data->candlesticks[idx].total_price,data->candlesticks[idx].total_volume,time_diff,data->candlesticks[idx].empty,data->candlesticks[idx].count);
 }
 
 void writeCandlestick(candle_t candle){
-    char name[20];
-    sprintf(name,"%.4s-Candlesticks.txt",candle.symbol);
+    char name[30];
+    sprintf(name,"%s-Candlesticks.txt",candle.symbol);
     
     FILE *f;
     f = fopen(name,"a");
@@ -140,8 +140,8 @@ void writeCandlestick(candle_t candle){
 }
 
 void writeData(char *symbol, double avg_price, double total_volume){
-    char name[20];
-    sprintf(name,"%.4s-Data.txt",symbol);
+    char name[30];
+    sprintf(name,"%s-Data.txt",symbol);
     
     FILE *f;
     f = fopen(name,"a");
@@ -225,9 +225,6 @@ void parseJson(data_t* data, int n_stocks, char* response){
             updateCandlestick(data,idx,p->valuedouble,(unsigned long long)t->valuedouble,v->valuedouble);
         }
     }
-    else{
-        printf("got: %s\n",resp);
-    }
     cJSON_Delete(resp);
 }
 
@@ -242,7 +239,7 @@ static void INT_HANDLER(int signo) {
 struct session_data {
     int fd;
 };
-
+/*
 struct pthread_routine_tool {
     struct lws_context *context;
     struct lws *wsi;
@@ -264,18 +261,17 @@ static int websocket_write_back(struct lws *wsi_in, char *str, int str_size_in)
         len = str_size_in;
 
     out = (char *)malloc(sizeof(char)*(LWS_SEND_BUFFER_PRE_PADDING + len + LWS_SEND_BUFFER_POST_PADDING));
-    //* setup the buffer*/
+    
     memcpy (out + LWS_SEND_BUFFER_PRE_PADDING, str, len );
-    //* write out*/
     n = lws_write(wsi_in, out + LWS_SEND_BUFFER_PRE_PADDING, len, LWS_WRITE_TEXT);
 
     printf(KBLU"[websocket_write_back] %s\n"RESET, str);
-    //* free the buffer*/
+    //* free the buffer
     free(out);
 
     return n;
 }
-
+*/
 
 static int ws_service_callback(
                          struct lws *wsi,
@@ -293,7 +289,7 @@ static int ws_service_callback(
             connection_flag = 1;
 	        lws_callback_on_writable(wsi);
             break;
-
+        
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
             printf(KRED"[Main Service] Connect with server error: %s.\n"RESET, in);
             destroy_flag = 1;
@@ -302,6 +298,11 @@ static int ws_service_callback(
 
         case LWS_CALLBACK_CLOSED:
             printf(KYEL"[Main Service] LWS_CALLBACK_CLOSED\n"RESET);
+            destroy_flag = 1;
+            connection_flag = 0;
+            break;
+        case LWS_CALLBACK_CLIENT_CLOSED:
+            printf(KYEL"\nSESSION ENDED\n"RESET);
             destroy_flag = 1;
             connection_flag = 0;
             break;
@@ -320,8 +321,7 @@ static int ws_service_callback(
             printf(KYEL"[Main Service] On writeable is called.\n"RESET);
             char* out = NULL;
             
-            int sym_num = 2;
-            char symb_arr[][100] = {"APPL\0", "AMZN\0", "BINANCE:BTCUSDT\0", "IC MARKETS:1\0"};
+            char symb_arr[][100] = {"AMZN\0", "IBM\0", "BINANCE:ETHUSDT\0", "AAPL\0"};
             char str[50];
             for(int i = 0; i < 4; i++)
             {
@@ -374,7 +374,7 @@ int main(void)
     struct lws_protocols protocol;
 
     //test_start
-    char symb_arr[][100] = {"APPL\0", "AMZN\0", "BINANCE:BTCUSDT\0", "IC MARKETS:1\0"};
+    char symb_arr[][100] = {"AMZN\0", "IBM\0", "BINANCE:ETHUSDT\0", "AAPL\0"};
     int n_stocks = sizeof(symb_arr)/sizeof(symb_arr[0]);
     int minutes = 15;
     data_t* p = initialiseData(n_stocks,minutes,symb_arr);
@@ -394,7 +394,7 @@ int main(void)
     
     char inputURL[300] = 
 	//"wss://socketsbay.com/wss/v2/2/demo/";
-	"ws.finnhub.io/?token=ca5l84iad3i4sbn0eskg";
+	"ws.finnhub.io/?token=cb69tmqad3i70tu6288g";
     const char *urlProtocol, *urlTempPath;
 	char urlPath[300];
     context = lws_create_context(&info);
