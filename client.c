@@ -41,17 +41,29 @@ typedef struct{
 typedef struct{
     per_min_stats_t **past_stats;
     candle_t *candlesticks;
+    char **symbol_arr;
+    int symbol_num;
+    int past_minutes;
+    bool sent;
 } data_t;
 
-data_t* initialiseData(int n_stocks,int past_minutes,char stocks[][100]){
+data_t* initialiseData(char stocks[][100],int n_stocks,int past_minutes){
     data_t* s = malloc(sizeof(data_t));
-    s->past_stats = malloc(sizeof(per_min_stats_t*)*n_stocks);
-    s->candlesticks = malloc(sizeof(candle_t)*n_stocks);
-    for (int i=0;i<n_stocks;i++){
+    s->symbol_num = n_stocks;
+    s->past_minutes = past_minutes;
+    char** syms = malloc(sizeof(char*)*s->symbol_num);
+    for (int i=0;i<s->symbol_num;i++){
+        syms[i] = &stocks[i][0];
+    }
+    s->symbol_arr = syms;
+    s->sent = false;
+    s->past_stats = malloc(sizeof(per_min_stats_t*)*s->symbol_num);
+    s->candlesticks = malloc(sizeof(candle_t)*s->symbol_num);
+    for (int i=0;i<s->symbol_num;i++){
         s->candlesticks[i].symbol = &stocks[i][0];
         s->candlesticks[i].empty = true;
-        s->past_stats[i] = malloc(sizeof(per_min_stats_t)*past_minutes);
-        for(int j=0;j<past_minutes;j++){
+        s->past_stats[i] = malloc(sizeof(per_min_stats_t)*s->past_minutes);
+        for(int j=0;j<s->past_minutes;j++){
             s->past_stats[i][j].total_volume = 0;
             s->past_stats[i][j].total_price = 0;
             s->past_stats[i][j].count = 0;
@@ -61,8 +73,8 @@ data_t* initialiseData(int n_stocks,int past_minutes,char stocks[][100]){
     return s;
 }
 
-int findIndex(data_t* data, int n_stocks, char* symbol){
-    for(int i=0;i<n_stocks;i++){
+int findIndex(data_t* data, char* symbol){
+    for(int i=0;i<data->symbol_num;i++){
         if (strcmp(data->candlesticks[i].symbol,symbol) == 0){
             return i;
         }
@@ -79,15 +91,15 @@ unsigned long long returnTime(){
     return time;
 }
 
-void writeTrade(char* symbol,double p, double v,unsigned long long trade_time, unsigned long long time_diff){
+void writeTrade(char* symbol,double p, double v,unsigned long long trade_time, int time_diff){
     char name[30];
     sprintf(name,"%s-Trades.txt",symbol);
     
     FILE *f;
     f = fopen(name,"a");
-    size_t needed = snprintf(NULL, 0, "%lf %lf %llu %llu\n",p,v,trade_time,time_diff) + 1;
+    size_t needed = snprintf(NULL, 0, "%lf %lf %llu %d\n",p,v,trade_time,time_diff) + 1;
     char  *buffer = malloc(needed);
-    sprintf(buffer,"%lf %lf %llu %llu\n",p,v,trade_time,time_diff);
+    sprintf(buffer,"%lf %lf %llu %d\n",p,v,trade_time,time_diff);
     fwrite(buffer,needed,1,f);
     free(buffer);
     fclose(f);
@@ -119,7 +131,7 @@ void updateCandlestick(data_t* data,int idx, double p, unsigned long long t, dou
     }
 
     unsigned long long time_now = returnTime();
-    unsigned long long time_diff = time_now - t;
+    int time_diff = time_now - t;
     
     writeTrade(data->candlesticks[idx].symbol,p,v,t,time_diff);
     //printf("Candlestick: %s Open: %lf Close: %lf Low: %lf High: %lf Total Price: %lf Total Volume: %lf Timediff: %llu Empty: %d Count: %d\n", data->candlesticks[idx].symbol, data->candlesticks[idx].open_price,data->candlesticks[idx].close_price,data->candlesticks[idx].low_price,data->candlesticks[idx].high_price,data->candlesticks[idx].total_price,data->candlesticks[idx].total_volume,time_diff,data->candlesticks[idx].empty,data->candlesticks[idx].count);
@@ -153,12 +165,12 @@ void writeData(char *symbol, double avg_price, double total_volume){
     fclose(f);
 }
 
-void calculatePastData(data_t* data, int n_stocks, int past_minutes){
-    for(int i=n_stocks-1;i>=0;i--){
+void calculatePastData(data_t* data){
+    for(int i=data->symbol_num-1;i>=0;i--){
         double total_volume = 0;
         double total_price = 0;
         int count = 1;
-        for(int j=past_minutes-1;j>=0;j--){
+        for(int j=data->past_minutes-1;j>=0;j--){
             if (j!=0){
                 data->past_stats[i][j] = data->past_stats[i][j-1];
             }
@@ -195,7 +207,7 @@ void calculateCandlestick(candle_t *candlesticks,int n_stocks){
 }
 
 
-void parseJson(data_t* data, int n_stocks, char* response){
+void parseJson(data_t* data, char* response){
     cJSON *resp = cJSON_Parse(response);
     const char *trade_str = "trade";
     const cJSON *type = NULL;
@@ -221,7 +233,7 @@ void parseJson(data_t* data, int n_stocks, char* response){
             cJSON *v = cJSON_GetObjectItemCaseSensitive(trade, "v");
 
             //printf("%lf-%s-%llu-%lf-%d\n",p->valuedouble,s->valuestring,t->valuedouble,v->valuedouble,cnt++);
-            int idx = findIndex(data,n_stocks,s->valuestring);
+            int idx = findIndex(data,s->valuestring);
             updateCandlestick(data,idx,p->valuedouble,(unsigned long long)t->valuedouble,v->valuedouble);
         }
     }
@@ -295,7 +307,7 @@ static int ws_service_callback(
             destroy_flag = 1;
             connection_flag = 0;
             break;
-
+        
         case LWS_CALLBACK_CLOSED:
             printf(KYEL"[Main Service] LWS_CALLBACK_CLOSED\n"RESET);
             destroy_flag = 1;
@@ -303,40 +315,43 @@ static int ws_service_callback(
             break;
         case LWS_CALLBACK_CLIENT_CLOSED:
             printf(KYEL"\nSESSION ENDED\n"RESET);
-            destroy_flag = 1;
+            //destroy_flag = 1;
             connection_flag = 0;
             break;
 
         case LWS_CALLBACK_TIMER:
             lws_set_timer_usecs(wsi,60000000);
-            calculatePastData(((data_t*)userdata),4,15);
-            calculateCandlestick(((data_t*)userdata)->candlesticks,4);
+            calculatePastData(((data_t*)userdata));
+            calculateCandlestick(((data_t*)userdata)->candlesticks,((data_t*)userdata)->symbol_num);
             break;
             
         case LWS_CALLBACK_CLIENT_RECEIVE:
             //printf(KCYN_L"[Main Service] Client recvived:%s\n"RESET, (char *)in);
-            parseJson((data_t*)userdata,4,(char *)in);
+            parseJson((data_t*)userdata,(char *)in);
             break;
-        case LWS_CALLBACK_CLIENT_WRITEABLE :
-            printf(KYEL"[Main Service] On writeable is called.\n"RESET);
-            char* out = NULL;
-            
-            char symb_arr[][100] = {"AMZN\0", "IBM\0", "BINANCE:ETHUSDT\0", "AAPL\0"};
-            char str[50];
-            for(int i = 0; i < 4; i++)
-            {
-            sprintf(str, "{\"type\":\"subscribe\",\"symbol\":\"%s\"}", symb_arr[i]);
-            printf(str);
-            int len = strlen(str);
-            
-            out = (char *)malloc(sizeof(char)*(LWS_SEND_BUFFER_PRE_PADDING + len + LWS_SEND_BUFFER_POST_PADDING));
-            memcpy(out + LWS_SEND_BUFFER_PRE_PADDING, str, len);
-            
-            lws_write(wsi, out+LWS_SEND_BUFFER_PRE_PADDING, len, LWS_WRITE_TEXT);
+
+        case LWS_CALLBACK_CLIENT_WRITEABLE:
+            if(!((data_t*)userdata)->sent){
+                printf(KYEL"[Main Service] On writeable is called.\n"RESET);
+                char* out = NULL;
+                char str[50];
+                for(int i = 0; i < ((data_t*)userdata)->symbol_num ; i++)
+                {
+                sprintf(str, "{\"type\":\"subscribe\",\"symbol\":\"%s\"}", ((data_t*)userdata)->symbol_arr[i]);
+                printf(str);
+                int len = strlen(str);
+                
+                out = (char *)malloc(sizeof(char)*(LWS_SEND_BUFFER_PRE_PADDING + len + LWS_SEND_BUFFER_POST_PADDING));
+                memcpy(out + LWS_SEND_BUFFER_PRE_PADDING, str, len);
+                
+                lws_write(wsi, out+LWS_SEND_BUFFER_PRE_PADDING, len, LWS_WRITE_TEXT);
+                }
+                free(out);
+                writeable_flag = 1;
+                ((data_t*)userdata)->sent = true;
+                break;
             }
-            free(out);
-            writeable_flag = 1;
-            break;
+            else break;
 
         default:
             break;
@@ -359,7 +374,7 @@ static struct lws_protocols protocols[] =
 };
 
 int main(void)
-{
+{   
     //* register the signal SIGINT handler */
     struct sigaction act;
     act.sa_handler = INT_HANDLER;
@@ -373,14 +388,13 @@ int main(void)
     struct lws *wsi = NULL;
     struct lws_protocols protocol;
 
-    //test_start
-    char symb_arr[][100] = {"AMZN\0", "IBM\0", "BINANCE:ETHUSDT\0", "AAPL\0"};
+    char symb_arr[][100] = {"BA\0", "LMT\0", "AMZN\0", "IC MARKETS:1\0", "BINANCE:ETHUSDT\0","TPEIR.AT\0"};
     int n_stocks = sizeof(symb_arr)/sizeof(symb_arr[0]);
     int minutes = 15;
-    data_t* p = initialiseData(n_stocks,minutes,symb_arr);
+    data_t* p = initialiseData(symb_arr,n_stocks,minutes);
     void *t;
     t = p;
-    //test_end
+    //lws_set_log_level(1151, NULL);
     memset(&info, 0, sizeof info);
 
     info.port = CONTEXT_PORT_NO_LISTEN;
@@ -393,8 +407,7 @@ int main(void)
 
     
     char inputURL[300] = 
-	//"wss://socketsbay.com/wss/v2/2/demo/";
-	"ws.finnhub.io/?token=cb69tmqad3i70tu6288g";
+	"wss://ws.finnhub.io/?token=cb69tmqad3i70tu6288g";
     const char *urlProtocol, *urlTempPath;
 	char urlPath[300];
     context = lws_create_context(&info);
@@ -419,17 +432,16 @@ int main(void)
     clientConnectionInfo.port = 443;
     clientConnectionInfo.path = urlPath;
     clientConnectionInfo.ssl_connection = LCCSCF_USE_SSL | LCCSCF_ALLOW_SELFSIGNED | LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
-    
-    
-    
     clientConnectionInfo.host = clientConnectionInfo.address;
     clientConnectionInfo.origin = clientConnectionInfo.address;
     clientConnectionInfo.ietf_version_or_minus_one = -1;
-    clientConnectionInfo.protocol = protocols[0].name;
+    clientConnectionInfo.protocol = "";
+    clientConnectionInfo.local_protocol_name = protocols[0].name;
     printf("Testing %s\n\n", clientConnectionInfo.address);
     printf("Connecticting to %s://%s:%d%s \n\n", urlProtocol, 
     clientConnectionInfo.address, clientConnectionInfo.port, urlPath);
 
+    
     wsi = lws_client_connect_via_info(&clientConnectionInfo);
 
     if (wsi == NULL) {
@@ -441,10 +453,10 @@ int main(void)
 
     while(!destroy_flag)
     {
-        lws_service(context, 50);
+        lws_service(context, 0);
     }
 
     lws_context_destroy(context);
 
-    return 0;
+    
 }
